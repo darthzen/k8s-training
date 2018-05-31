@@ -11,7 +11,7 @@ fi
 SERVICE_ACCOUNT_NAME=$1
 NAMESPACE="$2"
 KUBECFG_FILE_NAME="/tmp/kube/k8s-${SERVICE_ACCOUNT_NAME}-${NAMESPACE}-conf"
-TARGET_FOLDER="/tmp/kube"
+TARGET_FOLDER="kubeconfig/$1"
 
 create_target_folder() {
     echo -n "Creating target directory to hold files in ${TARGET_FOLDER}..."
