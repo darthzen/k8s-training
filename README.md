@@ -4,7 +4,7 @@
 ### Kubernetes client
 ```
   zypper ar https://download.opensuse.org/repositories/devel:/CaaSP:/Head:/ControllerNode/openSUSE_Leap_42.3/devel:CaaSP:Head:ControllerNode.repo
-  zypper in kubernetes-client kubernetes-common
+  zypper in kubernetes-client kubernetes-common jq
 ```
 ### Helm
 ```

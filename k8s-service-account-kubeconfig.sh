@@ -1,97 +1,39 @@
-#!/bin/bash
-set -e
-set -o pipefail
+#!/bin/bash -e
 
-# Add user to k8s using service account, no RBAC (must create RBAC after this script)
-if [[ -z "$1" ]] || [[ -z "$2" ]]; then
- echo "usage: $0 <service_account_name> <namespace>"
- exit 1
-fi
+# Usage ./k8s-service-account-kubeconfig.sh ( namespace ) ( service account name )
 
-SERVICE_ACCOUNT_NAME=$1
-NAMESPACE="$2"
-KUBECFG_FILE_NAME="/tmp/kube/k8s-${SERVICE_ACCOUNT_NAME}-${NAMESPACE}-conf"
-TARGET_FOLDER="kubeconfig/$1"
+TEMPDIR=$( mktemp -d )
 
-create_target_folder() {
-    echo -n "Creating target directory to hold files in ${TARGET_FOLDER}..."
-    mkdir -p "${TARGET_FOLDER}"
-    printf "done"
-}
+trap "{ rm -rf $TEMPDIR ; exit 255; }" EXIT
 
-create_service_account() {
-    echo -e "\\nCreating a service account: ${SERVICE_ACCOUNT_NAME} on namespace: ${NAMESPACE}"
-    kubectl create sa "${SERVICE_ACCOUNT_NAME}" --namespace "${NAMESPACE}"
-}
+SA_SECRET=$( kubectl get sa -n $1 $2 -o jsonpath='{.secrets[0].name}' )
 
-get_secret_name_from_service_account() {
-    echo -e "\\nGetting secret of service account ${SERVICE_ACCOUNT_NAME}-${NAMESPACE}"
-    SECRET_NAME=$(kubectl get sa "${SERVICE_ACCOUNT_NAME}" --namespace "${NAMESPACE}" -o json | jq -r '.secrets[].name')
-    echo "Secret name: ${SECRET_NAME}"
-}
+# Pull the bearer token and cluster CA from the service account secret.
+BEARER_TOKEN=$( kubectl get secrets -n $1 $SA_SECRET -o jsonpath='{.data.token}' | base64 -d )
+kubectl get secrets -n $1 $SA_SECRET -o jsonpath='{.data.ca\.crt}' | base64 -d > $TEMPDIR/ca.crt
 
-extract_ca_crt_from_secret() {
-    echo -e -n "\\nExtracting ca.crt from secret..."
-    kubectl get secret "${SECRET_NAME}" --namespace "${NAMESPACE}" -o json | jq \
-    -r '.data["ca.crt"]' | base64 -D > "${TARGET_FOLDER}/ca.crt"
-    printf "done"
-}
+CLUSTER_URL=$( kubectl config view -o jsonpath='{.clusters[0].cluster.server}' )
 
-get_user_token_from_secret() {
-    echo -e -n "\\nGetting user token from secret..."
-    USER_TOKEN=$(kubectl get secret "${SECRET_NAME}" \
-    --namespace "${NAMESPACE}" -o json | jq -r '.data["token"]' | base64 -D)
-    printf "done"
-}
 
-set_kube_config_values() {
-    context=$(kubectl config current-context)
-    echo -e "\\nSetting current context to: $context"
+KUBECONFIG=kubeconfig-$2
 
-    CLUSTER_NAME=$(kubectl config get-contexts "$context" | awk '{print $3}' | tail -n 1)
-    echo "Cluster name: ${CLUSTER_NAME}"
-
-    ENDPOINT=$(kubectl config view \
-    -o jsonpath="{.clusters[?(@.name == \"${CLUSTER_NAME}\")].cluster.server}")
-    echo "Endpoint: ${ENDPOINT}"
-
-    # Set up the config
-    echo -e "\\nPreparing k8s-${SERVICE_ACCOUNT_NAME}-${NAMESPACE}-conf"
-    echo -n "Setting a cluster entry in kubeconfig..."
-    kubectl config set-cluster "${CLUSTER_NAME}" \
-    --kubeconfig="${KUBECFG_FILE_NAME}" \
-    --server="${ENDPOINT}" \
-    --certificate-authority="${TARGET_FOLDER}/ca.crt" \
+kubectl config --kubeconfig=$KUBECONFIG \
+    set-cluster \
+    $CLUSTER_URL \
+    --server=$CLUSTER_URL \
+    --certificate-authority=$TEMPDIR/ca.crt \
     --embed-certs=true
 
-    echo -n "Setting token credentials entry in kubeconfig..."
-    kubectl config set-credentials \
-    "${SERVICE_ACCOUNT_NAME}-${NAMESPACE}-${CLUSTER_NAME}" \
-    --kubeconfig="${KUBECFG_FILE_NAME}" \
-    --token="${USER_TOKEN}"
+kubectl config --kubeconfig=$KUBECONFIG \
+    set-credentials $2 --token=$BEARER_TOKEN
 
-    echo -n "Setting a context entry in kubeconfig..."
-    kubectl config set-context \
-    "${SERVICE_ACCOUNT_NAME}-${NAMESPACE}-${CLUSTER_NAME}" \
-    --kubeconfig="${KUBECFG_FILE_NAME}" \
-    --cluster="${CLUSTER_NAME}" \
-    --user="${SERVICE_ACCOUNT_NAME}-${NAMESPACE}-${CLUSTER_NAME}" \
-    --namespace="${NAMESPACE}"
+kubectl config --kubeconfig=$KUBECONFIG \
+    set-context geeko-lab \
+    --cluster=$CLUSTER_URL \
+    --user=$2 \
+    --namespace=$1
 
-    echo -n "Setting the current-context in the kubeconfig file..."
-    kubectl config use-context "${SERVICE_ACCOUNT_NAME}-${NAMESPACE}-${CLUSTER_NAME}" \
-    --kubeconfig="${KUBECFG_FILE_NAME}"
-}
+kubectl config --kubeconfig=$KUBECONFIG \
+    use-context geeko-lab
 
-create_target_folder
-create_service_account
-get_secret_name_from_service_account
-extract_ca_crt_from_secret
-get_user_token_from_secret
-set_kube_config_values
-
-echo -e "\\nAll done! Test with:"
-echo "KUBECONFIG=${KUBECFG_FILE_NAME} kubectl get pods"
-echo "you should not have any permissions by default - you have just created the authentication part"
-echo "You will need to create RBAC permissions"
-KUBECONFIG=${KUBECFG_FILE_NAME} kubectl get pods
+echo "kubeconfig written to file \"$KUBECONFIG\""

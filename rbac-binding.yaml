@@ -2,10 +2,10 @@ kind: RoleBinding
 apiVersion: rbac.authorization.k8s.io/v1beta1
 metadata:
   name: deployment-manager-binding
-  namespace: YOURNAMESPACE
+  namespace: <yourspace>
 subjects:
 - kind: User
-  name: YOURUSER
+  name: <youruser>
   apiGroup: ""
 roleRef:
   kind: Role
